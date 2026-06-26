@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/seunome/perfume-api/internal/auth"
 	"github.com/seunome/perfume-api/internal/db"
 	"github.com/seunome/perfume-api/internal/handlers"
 )
@@ -35,9 +36,19 @@ func main() {
 	}
 	log.Println("✅ Conectado ao PostgreSQL")
 
+	// Serviço de autenticação (JWT + refresh). O segredo vem do ambiente.
+	segredo := os.Getenv("JWT_SECRET")
+	if segredo == "" {
+		log.Fatal("variável de ambiente JWT_SECRET não definida")
+	}
+	authSvc := auth.NewService(segredo, 15*time.Minute, 7*24*time.Hour)
+
 	// Queries tipadas geradas pelo sqlc + router com middlewares e rotas.
 	queries := db.New(pool)
-	r := handlers.NewRouter(queries)
+	r, err := handlers.NewRouter(queries, authSvc)
+	if err != nil {
+		log.Fatalf("erro ao montar router: %v", err)
+	}
 
 	log.Println("🌸 Servidor rodando em http://localhost:8080")
 	if err := http.ListenAndServe(":8080", r); err != nil {

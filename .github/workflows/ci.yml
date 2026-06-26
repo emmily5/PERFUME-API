@@ -11,6 +11,26 @@ jobs:
     name: Build e Testes
     runs-on: ubuntu-latest
 
+    # Sobe um PostgreSQL para os testes de integração rodarem de verdade.
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: perfumaria_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    env:
+      DATABASE_URL: postgres://postgres:postgres@localhost:5432/perfumaria_test?sslmode=disable
+      JWT_SECRET: ci-secret-not-for-production
+
     steps:
       - name: Checkout do código
         uses: actions/checkout@v4
@@ -18,13 +38,16 @@ jobs:
       - name: Configurar Go
         uses: actions/setup-go@v5
         with:
-          go-version: '1.22'
+          go-version: '1.26'
 
       - name: Baixar dependências
         run: go mod download
 
-      - name: Verificar formatação (go vet)
+      - name: Análise estática (go vet)
         run: go vet ./...
+
+      - name: Aplicar schema (migrations)
+        run: go run ./scripts/migrate
 
       - name: Rodar todos os testes
         run: go test ./... -v

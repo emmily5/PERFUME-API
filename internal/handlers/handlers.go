@@ -6,18 +6,20 @@ import (
 	"strconv"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/seunome/perfume-api/internal/auth"
 	"github.com/seunome/perfume-api/internal/db"
 )
 
 // Handler agrupa as dependências dos handlers HTTP.
-// Recebe o *db.Queries gerado pelo sqlc, que executa as queries no PostgreSQL.
+// Recebe o *db.Queries gerado pelo sqlc e o serviço de autenticação.
 type Handler struct {
-	q *db.Queries
+	q    *db.Queries
+	auth *auth.Service
 }
 
-// New cria um Handler com o acesso ao banco injetado.
-func New(q *db.Queries) *Handler {
-	return &Handler{q: q}
+// New cria um Handler com o acesso ao banco e o serviço de auth injetados.
+func New(q *db.Queries, authSvc *auth.Service) *Handler {
+	return &Handler{q: q, auth: authSvc}
 }
 
 // --- helpers ---

@@ -25,3 +25,19 @@ type Perfume struct {
 	Estoque  int32              `json:"estoque"`
 	CriadoEm pgtype.Timestamptz `json:"criado_em"`
 }
+
+type RefreshToken struct {
+	ID        int64              `json:"id"`
+	UserID    int64              `json:"user_id"`
+	TokenHash string             `json:"token_hash"`
+	ExpiraEm  pgtype.Timestamptz `json:"expira_em"`
+	Revogado  bool               `json:"revogado"`
+	CriadoEm  pgtype.Timestamptz `json:"criado_em"`
+}
+
+type User struct {
+	ID        int64              `json:"id"`
+	Email     string             `json:"email"`
+	SenhaHash string             `json:"senha_hash"`
+	CriadoEm  pgtype.Timestamptz `json:"criado_em"`
+}
