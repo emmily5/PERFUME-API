@@ -4,121 +4,137 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
-	"strconv"
 
-	"github.com/go-chi/chi/v5"
-	"github.com/seunome/perfume-api/internal/models"
-	"github.com/seunome/perfume-api/internal/store"
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
+	"github.com/seunome/perfume-api/internal/db"
 )
 
-// PerfumeHandler agrupa todos os handlers relacionados a perfumes
-type PerfumeHandler struct {
-	store *store.PerfumeStore
-}
-
-// NewPerfumeHandler cria um PerfumeHandler com o store injetado
-func NewPerfumeHandler(s *store.PerfumeStore) *PerfumeHandler {
-	return &PerfumeHandler{store: s}
-}
-
-// --- helpers ---
-
-func respJSON(w http.ResponseWriter, status int, dado any) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(status)
-	json.NewEncoder(w).Encode(dado)
-}
-
-func respErro(w http.ResponseWriter, status int, msg string) {
-	respJSON(w, status, map[string]string{"erro": msg})
-}
-
-func idFromURL(r *http.Request) (int, error) {
-	return strconv.Atoi(chi.URLParam(r, "id"))
-}
-
-// --- handlers ---
-
-// ListarPerfumes GET /perfumes
-// Retorna todos os perfumes cadastrados
-func (h *PerfumeHandler) ListarPerfumes(w http.ResponseWriter, r *http.Request) {
-	perfumes := h.store.Listar()
+// ListarPerfumes GET /perfumes — lista todos os perfumes.
+func (h *Handler) ListarPerfumes(w http.ResponseWriter, r *http.Request) {
+	perfumes, err := h.q.ListarPerfumes(r.Context())
+	if err != nil {
+		respErro(w, http.StatusInternalServerError, "erro ao listar perfumes")
+		return
+	}
+	if perfumes == nil {
+		perfumes = []db.Perfume{}
+	}
 	respJSON(w, http.StatusOK, perfumes)
 }
 
-// BuscarPerfume GET /perfumes/{id}
-// Retorna um perfume específico pelo ID
-func (h *PerfumeHandler) BuscarPerfume(w http.ResponseWriter, r *http.Request) {
+// BuscarPerfume GET /perfumes/{id} — retorna um perfume pelo ID.
+func (h *Handler) BuscarPerfume(w http.ResponseWriter, r *http.Request) {
 	id, err := idFromURL(r)
 	if err != nil {
 		respErro(w, http.StatusBadRequest, "id inválido")
 		return
 	}
 
-	perfume, err := h.store.BuscarPorID(id)
-	if errors.Is(err, store.ErrNaoEncontrado) {
+	perfume, err := h.q.BuscarPerfume(r.Context(), id)
+	if errors.Is(err, pgx.ErrNoRows) {
 		respErro(w, http.StatusNotFound, "perfume não encontrado")
 		return
 	}
-
+	if err != nil {
+		respErro(w, http.StatusInternalServerError, "erro ao buscar perfume")
+		return
+	}
 	respJSON(w, http.StatusOK, perfume)
 }
 
-// CriarPerfume POST /perfumes
-// Cria um novo perfume a partir do corpo JSON da requisição
-func (h *PerfumeHandler) CriarPerfume(w http.ResponseWriter, r *http.Request) {
-	var p models.Perfume
-	if err := json.NewDecoder(r.Body).Decode(&p); err != nil {
+// CriarPerfume POST /perfumes — cria um perfume vinculado a uma marca existente.
+func (h *Handler) CriarPerfume(w http.ResponseWriter, r *http.Request) {
+	var in db.CriarPerfumeParams
+	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
 		respErro(w, http.StatusBadRequest, "corpo da requisição inválido")
 		return
 	}
 
-	if p.Nome == "" || p.Marca == "" {
-		respErro(w, http.StatusBadRequest, "nome e marca são obrigatórios")
+	if in.Nome == "" {
+		respErro(w, http.StatusBadRequest, "nome é obrigatório")
+		return
+	}
+	if in.MarcaID == 0 {
+		respErro(w, http.StatusBadRequest, "marca_id é obrigatório")
 		return
 	}
 
-	criado := h.store.Criar(p)
-	respJSON(w, http.StatusCreated, criado)
+	perfume, err := h.q.CriarPerfume(r.Context(), in)
+	if violaChaveEstrangeira(err) {
+		respErro(w, http.StatusBadRequest, "marca_id não corresponde a uma marca existente")
+		return
+	}
+	if err != nil {
+		respErro(w, http.StatusInternalServerError, "erro ao criar perfume")
+		return
+	}
+	respJSON(w, http.StatusCreated, perfume)
 }
 
-// AtualizarPerfume PUT /perfumes/{id}
-// Substitui completamente os dados de um perfume
-func (h *PerfumeHandler) AtualizarPerfume(w http.ResponseWriter, r *http.Request) {
+// AtualizarPerfume PUT /perfumes/{id} — substitui os dados de um perfume.
+func (h *Handler) AtualizarPerfume(w http.ResponseWriter, r *http.Request) {
 	id, err := idFromURL(r)
 	if err != nil {
 		respErro(w, http.StatusBadRequest, "id inválido")
 		return
 	}
 
-	var p models.Perfume
-	if err := json.NewDecoder(r.Body).Decode(&p); err != nil {
+	var in db.AtualizarPerfumeParams
+	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
 		respErro(w, http.StatusBadRequest, "corpo da requisição inválido")
 		return
 	}
+	in.ID = id
 
-	atualizado, err := h.store.Atualizar(id, p)
-	if errors.Is(err, store.ErrNaoEncontrado) {
-		respErro(w, http.StatusNotFound, "perfume não encontrado")
+	if in.Nome == "" {
+		respErro(w, http.StatusBadRequest, "nome é obrigatório")
+		return
+	}
+	if in.MarcaID == 0 {
+		respErro(w, http.StatusBadRequest, "marca_id é obrigatório")
 		return
 	}
 
-	respJSON(w, http.StatusOK, atualizado)
+	perfume, err := h.q.AtualizarPerfume(r.Context(), in)
+	if errors.Is(err, pgx.ErrNoRows) {
+		respErro(w, http.StatusNotFound, "perfume não encontrado")
+		return
+	}
+	if violaChaveEstrangeira(err) {
+		respErro(w, http.StatusBadRequest, "marca_id não corresponde a uma marca existente")
+		return
+	}
+	if err != nil {
+		respErro(w, http.StatusInternalServerError, "erro ao atualizar perfume")
+		return
+	}
+	respJSON(w, http.StatusOK, perfume)
 }
 
-// DeletarPerfume DELETE /perfumes/{id}
-// Remove um perfume pelo ID
-func (h *PerfumeHandler) DeletarPerfume(w http.ResponseWriter, r *http.Request) {
+// DeletarPerfume DELETE /perfumes/{id} — remove um perfume.
+func (h *Handler) DeletarPerfume(w http.ResponseWriter, r *http.Request) {
 	id, err := idFromURL(r)
 	if err != nil {
 		respErro(w, http.StatusBadRequest, "id inválido")
 		return
 	}
 
-	if err := h.store.Deletar(id); errors.Is(err, store.ErrNaoEncontrado) {
+	// Confere se existe para responder 404 quando for o caso (DELETE é idempotente no SQL).
+	if _, err := h.q.BuscarPerfume(r.Context(), id); errors.Is(err, pgx.ErrNoRows) {
 		respErro(w, http.StatusNotFound, "perfume não encontrado")
 		return
 	}
 
+	if err := h.q.DeletarPerfume(r.Context(), id); err != nil {
+		respErro(w, http.StatusInternalServerError, "erro ao deletar perfume")
+		return
+	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// violaChaveEstrangeira detecta o erro 23503 do PostgreSQL (foreign_key_violation).
+func violaChaveEstrangeira(err error) bool {
+	var pgErr *pgconn.PgError
+	return errors.As(err, &pgErr) && pgErr.Code == "23503"
 }

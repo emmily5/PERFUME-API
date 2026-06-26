@@ -1,0 +1,17 @@
+version: "2"
+sql:
+  - engine: "postgresql"
+    schema: "db/schema"
+    queries: "db/queries"
+    gen:
+      go:
+        package: "db"
+        out: "internal/db"
+        sql_package: "pgx/v5"
+        emit_json_tags: true
+        emit_pointers_for_null_types: true
+        overrides:
+          # Mapeia NUMERIC para float64 (em vez de pgtype.Numeric),
+          # mantendo a API JSON simples e compatível com a Sprint 1.
+          - db_type: "pg_catalog.numeric"
+            go_type: "float64"

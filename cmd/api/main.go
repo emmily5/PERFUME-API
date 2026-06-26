@@ -1,42 +1,43 @@
 package main
 
 import (
+	"context"
 	"log"
 	"net/http"
+	"os"
+	"time"
 
-	"github.com/go-chi/chi/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/seunome/perfume-api/internal/db"
 	"github.com/seunome/perfume-api/internal/handlers"
-	"github.com/seunome/perfume-api/internal/middleware"
-	"github.com/seunome/perfume-api/internal/store"
 )
 
 func main() {
-	// Inicializa o store em memória com dados de exemplo
-	s := store.New()
+	// String de conexão lida do ambiente.
+	// Ex: postgres://usuario:senha@localhost:5432/perfumaria?sslmode=disable
+	dsn := os.Getenv("DATABASE_URL")
+	if dsn == "" {
+		log.Fatal("variável de ambiente DATABASE_URL não definida")
+	}
 
-	// Inicializa os handlers
-	h := handlers.NewPerfumeHandler(s)
+	// Conecta ao PostgreSQL com um pool de conexões.
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
 
-	// Cria o router Chi
-	r := chi.NewRouter()
+	pool, err := pgxpool.New(ctx, dsn)
+	if err != nil {
+		log.Fatalf("erro ao criar pool de conexões: %v", err)
+	}
+	defer pool.Close()
 
-	// Middlewares globais (ordem importa: recovery primeiro para capturar panics)
-	r.Use(middleware.Recovery)
-	r.Use(middleware.Logger)
+	if err := pool.Ping(ctx); err != nil {
+		log.Fatalf("não foi possível conectar ao banco: %v", err)
+	}
+	log.Println("✅ Conectado ao PostgreSQL")
 
-	// Rotas
-	r.Get("/", func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		w.Write([]byte(`{"mensagem":"Bem-vindo à API da Loja de Perfumes 🌸","versao":"1.0"}`))
-	})
-
-	r.Route("/perfumes", func(r chi.Router) {
-		r.Get("/", h.ListarPerfumes)       // GET  /perfumes
-		r.Post("/", h.CriarPerfume)        // POST /perfumes
-		r.Get("/{id}", h.BuscarPerfume)    // GET  /perfumes/{id}
-		r.Put("/{id}", h.AtualizarPerfume) // PUT  /perfumes/{id}
-		r.Delete("/{id}", h.DeletarPerfume) // DELETE /perfumes/{id}
-	})
+	// Queries tipadas geradas pelo sqlc + router com middlewares e rotas.
+	queries := db.New(pool)
+	r := handlers.NewRouter(queries)
 
 	log.Println("🌸 Servidor rodando em http://localhost:8080")
 	if err := http.ListenAndServe(":8080", r); err != nil {

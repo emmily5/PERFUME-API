@@ -1,0 +1,11 @@
+# Variáveis de ambiente (contêm credenciais)
+.env
+
+# Binários compilados
+/bin/
+*.exe
+perfume-api
+
+# Artefatos de teste/cobertura
+*.out
+coverage.*
